@@ -20,11 +20,10 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db-relacional:5432/${DB_NAME}
     depends_on:
-      domain-db:
-        condition: service_healthy
+      - db-relacional
     networks:
       - isolated-network
-      - domain-db-net
+      - db-relacional-net
 
   db-relacional:
     image: postgres:17
@@ -41,13 +40,13 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - domain-db-net
+      - db-relacional-net
 
 networks:
   isolated-network:
     driver: bridge
 
-  domain-db-net:
+  db-relacional-net:
     driver: bridge
     internal: true
 

@@ -2,11 +2,12 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import create_engine, text
 import datetime
 import logging
-import uuid
 import os
+import uuid
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 
 #Clases de payload y respuesta
 class PayloadTransaccion(BaseModel):
@@ -30,13 +31,7 @@ database_url = database_url.replace(
     1
 )
 
-engine = create_engine(database_url)
-
-with engine.connect() as connection:
-    result = connection.execute(
-        text("SELECT version()")
-    )
-    print(result.scalar())
+engine = create_engine(database_url, pool_pre_ping=True)
 
 #Logger para errores
 logger = logging.getLogger(__name__)
@@ -68,6 +63,21 @@ async def manejar_error_validacion(
     )
 
 
+@app.exception_handler(OperationalError)
+async def manejar_error_conexion_bd(
+    request: Request, exc: OperationalError
+) -> JSONResponse:
+    logger.exception("No se pudo completar la operación con la base de datos")
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "Base de datos no disponible",
+            "mensaje": "No se puede procesar la transacción en este momento.",
+        },
+        headers={"Retry-After": "5"},
+    )
+
+
 @app.exception_handler(Exception)
 async def manejar_error_interno(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("Error inesperado al procesar la solicitud")
@@ -82,7 +92,15 @@ async def manejar_error_interno(request: Request, exc: Exception) -> JSONRespons
 #Endpoints
 @app.get("/")
 def raiz():
-    return {"Servicio": "Transacciones", "Módulo": "B", "Estado": "Activo"}
+    return {"servicio": "transacciones", "estado": "activo"}
+
+
+@app.get("/bd/listo") #Endpoint para verificar conexión a base de datos
+def verificar_disponibilidad_bd():
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
+    return {"estado": "listo", "base_de_datos": "disponible"}
+
 
 @app.post("/transacciones/") 
 def procesar_transaccion(payload: PayloadTransaccion) -> Respuesta:
@@ -101,26 +119,26 @@ def procesar_transaccion(payload: PayloadTransaccion) -> Respuesta:
     return response
 
 #Interacción con base de datos
-def insertar_transaccion(id:str, timestamp:str, estado:str):
+def insertar_transaccion(transaccion_id: uuid.UUID, timestamp: datetime.datetime, estado: str):
     with engine.begin() as connection:
-            connection.execute(
-                text(
-                    """
-                    INSERT INTO transacciones (
-                        transaccion_id,
-                        estado,
-                        marca_de_tiempo
-                    )
-                    VALUES (
-                        CAST(:transaccion_id AS UUID),
-                        :estado,
-                        :marca_de_tiempo
-                    )
-                    """
-                ),
-                {
-                    "transaccion_id": str(id),
-                    "estado": estado,
-                    "marca_de_tiempo": timestamp,
-                },
-            )
+        connection.execute(
+            text(
+                """
+                INSERT INTO transacciones (
+                    transaccion_id,
+                    estado,
+                    marca_de_tiempo
+                )
+                VALUES (
+                    CAST(:transaccion_id AS UUID),
+                    :estado,
+                    :marca_de_tiempo
+                )
+                """
+            ),
+            {
+                "transaccion_id": transaccion_id,
+                "estado": estado,
+                "marca_de_tiempo": timestamp,
+            },
+        )
