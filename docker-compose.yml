@@ -9,7 +9,7 @@ services:
     environment:
       PORT: "8080"
       MODULO_B_URL: http://modulo-b:5000/transacciones/
-      MODULO_C_URL: http://modulo-c:6000/api/auditoria
+      MODULO_C_URL: http://modulo-c:6001/api/auditoria
     depends_on:
       modulo-b:
         condition: service_healthy
@@ -53,9 +53,9 @@ services:
       dockerfile: Dockerfile
     container_name: modulo-c
     expose:
-      - "5000"
+      - "6001"
     environment:
-      PORT: "6000"
+      PORT: "6001"
       MONGO_URI: mongodb://db-nosql:27017
       MONGO_DB: auditoria_db
     depends_on:
@@ -70,7 +70,7 @@ services:
         - wget
         - --spider
         - --quiet
-        - http://localhost:6000/health
+        - http://localhost:6001/health
       interval: 10s
       timeout: 5s
       retries: 5
@@ -127,5 +127,3 @@ networks:
 volumes:
   mongo-data:
   pg-data:
-
-

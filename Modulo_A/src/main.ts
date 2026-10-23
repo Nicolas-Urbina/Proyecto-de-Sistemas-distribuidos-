@@ -6,7 +6,7 @@ const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
 
 const MODULO_B_URL = process.env.MODULO_B_URL || 'http://modulo-b:5000/transacciones';
-const MODULO_C_URL = process.env.MODULO_C_URL || 'http://modulo-c:6000/auditoria';
+const MODULO_C_URL = process.env.MODULO_C_URL || 'http://modulo-c:6001/auditoria';
 
 // Middlewares
 app.use(cors());

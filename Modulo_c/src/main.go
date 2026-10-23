@@ -64,7 +64,7 @@ var (
 func main() {
 	puerto := os.Getenv("PORT")
 	if puerto == "" {
-		puerto = "6000"
+		puerto = "6001"
 	}
 
 	urlMongo := os.Getenv("MONGO_URI")

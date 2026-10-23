@@ -22,9 +22,9 @@ WORKDIR /root/
 COPY --from=builder /app/server .
 
 # Puerto interno establecido en la arquitectura
-EXPOSE 6000
+EXPOSE 6001
 
-ENV PORT=6000
+ENV PORT=6001
 ENV MONGO_URI=mongodb://db-nosql:27017
 ENV MONGO_DB=auditoria_db
 
