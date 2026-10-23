@@ -1,0 +1,52 @@
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+
+const app = express();
+const PORT = 8080; // Requisito de la arquitectura del proyecto
+
+// Middlewares
+app.use(cors());
+app.use(express.json());
+
+
+interface TransaccionRequest {
+  monto: number;
+  moneda: string;
+  cuenta_origen: string;
+  cuenta_destino: string;
+  descripcion?: string;
+}
+
+app.get('/api/saludo', (req: Request, res: Response) => {
+  res.json({ mensaje: '¡Hola! Esta es tu primera API en TypeScript.', estado: 'exitoso' });
+});
+
+app.post('/api/transacciones', (req: Request, res: Response) => {
+  const { monto, moneda, cuenta_origen, cuenta_destino, descripcion }: TransaccionRequest = req.body;
+
+  // Validación básica de los campos requeridos
+  if (!monto || !moneda || !cuenta_origen || !cuenta_destino) {
+    return res.status(400).json({
+      error: 'Payload incompleto',
+      mensaje: 'Los campos monto, moneda, cuenta_origen y cuenta_destino son obligatorios.'
+    });
+  }
+
+  // Por ahora simulamos la respuesta exitosa
+  // (Aquí luego irán los fetch hacia el Módulo B y Módulo C)
+  return res.status(201).json({
+    mensaje: 'Transacción recibida y validada por Módulo A',
+    datos_recibidos: {
+      monto,
+      moneda,
+      cuenta_origen,
+      cuenta_destino,
+      descripcion: descripcion || 'Sin descripción'
+    }
+  });
+});
+
+// Iniciar servidor
+app.listen(PORT, () => {
+  console.log(`Servidor corriendo en http://localhost:${PORT}`);
+});
