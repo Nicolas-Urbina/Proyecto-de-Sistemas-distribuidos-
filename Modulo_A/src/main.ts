@@ -99,7 +99,7 @@ app.post('/api/transacciones', async (req: Request, res: Response) => {
       });
     }
 
-    const dataC: AuditoriaRespuestaC = await resModuloC.json();[cite: 7]
+    const dataC: AuditoriaRespuestaC = await resModuloC.json();
 
     // 4. Retorno exitoso al cliente exterior (Postman/curl)[cite: 1, 4]
     return res.status(201).json({
