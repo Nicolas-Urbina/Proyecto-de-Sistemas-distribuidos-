@@ -13,7 +13,7 @@ RUN npm install
 
 # Copiar el código fuente y compilar
 COPY . .
-RUN npx tsc --target ES2020 --module commonjs src/main.ts --outDir dist
+RUN npx tsc --target ES2020 --module commonjs --esModuleInterop src/main.ts --outDir dist
 
 # -------------------------------------------------------------
 # Etapa 2: Runner (Imagen final de producción ultra liviana)
