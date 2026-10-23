@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,7 +17,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// PeticionAuditoria representa el contrato exacto enviado desde el Módulo A (Gateway)
 type PeticionAuditoria struct {
 	Monto         float64 `json:"monto,omitempty"`
 	Moneda        string  `json:"moneda,omitempty"`
@@ -28,7 +29,6 @@ type PeticionAuditoria struct {
 	PayloadHash   string  `json:"payload_hash"`
 }
 
-// RegistroAuditoria es el documento que se persiste en la base de datos (MongoDB)
 type RegistroAuditoria struct {
 	ID            primitive.ObjectID `json:"id,omitempty" bson:"_id,omitempty"`
 	Monto         float64            `json:"monto,omitempty" bson:"monto,omitempty"`
@@ -43,21 +43,18 @@ type RegistroAuditoria struct {
 	FechaRegistro time.Time          `json:"fecha_registro" bson:"fecha_registro"`
 }
 
-// RespuestaAuditoria cumple exactamente con la interfaz 'AuditoriaRespuestaC' esperada por el Módulo A
 type RespuestaAuditoria struct {
 	AuditoriaID string `json:"auditoria_id"`
 	Estado      string `json:"estado"`
 	Timestamp   string `json:"timestamp"`
 }
 
-// RespuestaEstado define la respuesta de salud similar a los otros módulos
 type RespuestaEstado struct {
 	Servicio string `json:"Servicio"`
 	Modulo   string `json:"Módulo"`
 	Estado   string `json:"Estado"`
 }
 
-// Variables globales
 var (
 	coleccionAuditoria *mongo.Collection
 	mutexMemoria       sync.RWMutex
@@ -72,7 +69,7 @@ func main() {
 
 	urlMongo := os.Getenv("MONGO_URI")
 	if urlMongo == "" {
-		urlMongo = "mongodb://db-nosql:27017"
+		urlMongo = "mongodb://localhost:27017"
 	}
 
 	nombreDB := os.Getenv("MONGO_DB")
@@ -107,7 +104,6 @@ func main() {
 	http.HandleFunc("/auditoria/", manejarAuditoria)
 	http.HandleFunc("/api/auditoria", manejarAuditoria)
 
-	// Iniciar el servidor HTTP
 	direccion := ":" + puerto
 	fmt.Printf("[INICIO] Servidor Módulo C (Auditoría) activo y escuchando en el puerto %s (http://0.0.0.0:%s)\n", puerto, puerto)
 	errorServidor := http.ListenAndServe(direccion, nil)
@@ -161,10 +157,16 @@ func manejarAuditoria(respuesta http.ResponseWriter, peticion *http.Request) {
 			return
 		}
 
-		if entrada.TransaccionID == "" || entrada.PayloadHash == "" {
-			respuesta.WriteHeader(http.StatusBadRequest)
-			respuesta.Write([]byte(`{"error": "Faltan campos obligatorios: transaccion_id o payload_hash"}`))
-			return
+		if entrada.TransaccionID == "" {
+			entrada.TransaccionID = fmt.Sprintf("tx-%d", time.Now().UnixNano())
+		}
+		if entrada.PayloadHash == "" {
+			textoParaHash := fmt.Sprintf("%.2f-%s-%s-%s", entrada.Monto, entrada.Moneda, entrada.CuentaOrigen, entrada.CuentaDestino)
+			hash := sha256.Sum256([]byte(textoParaHash))
+			entrada.PayloadHash = hex.EncodeToString(hash[:])
+		}
+		if entrada.Evento == "" {
+			entrada.Evento = "TRANSACCION_REGISTRADA"
 		}
 
 		ahora := time.Now().UTC()

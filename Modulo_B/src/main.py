@@ -25,4 +25,4 @@ def raiz():
 
 @app.post("/transacciones/")
 def procesar_transaccion(payload: PayloadTransaccion):
-    return Respuesta(transaccion_id="23590123", estado="RECIBIDO", marca_de_tiempo=datetime.datetime.now().strftime())
+    return Respuesta(transaccion_id="23590123", estado="RECIBIDO", marca_de_tiempo=datetime.datetime.now().isoformat())
