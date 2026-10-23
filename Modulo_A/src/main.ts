@@ -83,6 +83,11 @@ app.post('/api/transacciones', async (req: Request, res: Response) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        monto,
+        moneda,
+        cuenta_origen,
+        cuenta_destino,
+        descripcion: descripcion || '',
         transaccion_id: dataB.transaccion_id,
         evento: 'TRANSACCION_REGISTRADA',
         origen_ip: origenIp,
@@ -99,7 +104,7 @@ app.post('/api/transacciones', async (req: Request, res: Response) => {
       });
     }
 
-    const dataC: AuditoriaRespuestaC = await resModuloC.json();[cite: 7]
+    const dataC: AuditoriaRespuestaC = await resModuloC.json();
 
     // 4. Retorno exitoso al cliente exterior (Postman/curl)[cite: 1, 4]
     return res.status(201).json({
