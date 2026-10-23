@@ -96,6 +96,8 @@ services:
   db-nosql:
     image: mongo:7
     container_name: db-nosql
+    ports:
+      - "27017:27017"
     expose:
       - "27017"
     volumes:
