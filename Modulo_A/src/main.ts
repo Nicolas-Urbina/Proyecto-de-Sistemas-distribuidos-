@@ -35,7 +35,15 @@ interface AuditoriaRespuestaC {
 
 // puerta de enlace 
 app.post('/api/transacciones', async (req: Request, res: Response) => {
-  const payload: TransaccionRequest = req.body;
+  const body: unknown = req.body;
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return res.status(400).json({
+      error: 'Payload inválido',
+      mensaje: 'El cuerpo de la solicitud debe ser un objeto JSON.'
+    });
+  }
+
+  const payload = body as Partial<TransaccionRequest>;
   const { monto, moneda, cuenta_origen, cuenta_destino, descripcion } = payload;
 
   // 1. Validación del payload de entrada

@@ -40,6 +40,9 @@ POST http://localhost:8080/api/transacciones
 Content-Type: application/json
 ```
 
+Envía el cuerpo como JSON (en Postman, selecciona **Body → raw → JSON**). Si
+falta el cuerpo o no es un objeto JSON, el gateway responde con `400`.
+
 Ejemplo de cuerpo:
 
 ```json
