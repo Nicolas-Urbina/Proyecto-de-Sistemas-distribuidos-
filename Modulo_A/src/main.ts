@@ -17,8 +17,9 @@ interface TransaccionRequest {
   descripcion?: string;
 }
 
-app.get('/api/saludo', (req: Request, res: Response) => {
-  res.json({ mensaje: '¡Hola! Esta es tu primera API en TypeScript.', estado: 'exitoso' });
+app.get('/api/iniciacion', (req: Request, res: Response) => {
+  res.json({ mensaje: '¡El servidor esta activo', estado: 'exitoso' });
+  console.log('el servidor esta activo');
 });
 
 app.post('/api/transacciones', (req: Request, res: Response) => {
