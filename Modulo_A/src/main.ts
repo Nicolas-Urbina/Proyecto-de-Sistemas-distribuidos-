@@ -83,6 +83,11 @@ app.post('/api/transacciones', async (req: Request, res: Response) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        monto,
+        moneda,
+        cuenta_origen,
+        cuenta_destino,
+        descripcion: descripcion || '',
         transaccion_id: dataB.transaccion_id,
         evento: 'TRANSACCION_REGISTRADA',
         origen_ip: origenIp,

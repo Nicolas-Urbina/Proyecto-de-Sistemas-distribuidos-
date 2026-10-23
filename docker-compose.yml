@@ -1,0 +1,101 @@
+services:
+  modulo-a:
+    build:
+      context: ./Modulo_A
+      dockerfile: Dockerfile
+    container_name: modulo-a
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      MODULO_B_URL: http://modulo-b:5000/transacciones/
+      MODULO_C_URL: http://modulo-c:6000/api/auditoria
+    depends_on:
+      modulo-b:
+        condition: service_healthy
+      modulo-c:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    restart: unless-stopped
+
+  modulo-b:
+    build:
+      context: ./Modulo_B
+      dockerfile: Dockerfile
+    container_name: modulo-b
+    expose:
+      - "5000"
+    networks:
+      - distributed-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request
+          urllib.request.urlopen("http://localhost:5000/", timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  modulo-c:
+    build:
+      context: ./Modulo_c
+      dockerfile: Dockerfile
+    container_name: modulo-c
+    expose:
+      - "6000"
+    environment:
+      PORT: "6000"
+      MONGO_URI: mongodb://db-nosql:27017
+      MONGO_DB: auditoria_db
+    depends_on:
+      db-nosql:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --spider
+        - --quiet
+        - http://localhost:6000/health
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  db-nosql:
+    image: mongo:7
+    container_name: db-nosql
+    expose:
+      - "27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - distributed-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - db.adminCommand("ping").ok
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+networks:
+  distributed-network:
+    driver: bridge
+
+volumes:
+  mongo-data:
