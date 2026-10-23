@@ -2,3 +2,5 @@ fastapi[standard]
 redis
 types-redis
 uvicorn
+psycopg2
+sqlalchemy

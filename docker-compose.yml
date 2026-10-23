@@ -1,0 +1,55 @@
+services:
+  modulo-a:
+    build: ./Modulo_A
+    container_name: modulo-a
+    ports:
+      - "8080:8080"  # Solo este módulo expone puerto a tu máquina[cite: 1, 2]
+    environment:
+      - PORT=8080
+      - MODULO_B_URL=http://modulo-b:5000/transacciones
+      - MODULO_C_URL=http://modulo-c:6000/auditoria
+    depends_on:
+      - modulo-b
+      - modulo-c
+    networks:
+      - isolated-network
+
+  modulo-b:
+    build: ./Modulo_B
+    container_name: modulo-b
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db-relacional:5432/${DB_NAME}
+    depends_on:
+      domain-db:
+        condition: service_healthy
+    networks:
+      - isolated-network
+      - domain-db-net
+
+  db-relacional:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./Modulo_B/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - domain-db-net
+
+networks:
+  isolated-network:
+    driver: bridge
+
+  domain-db-net:
+    driver: bridge
+    internal: true
+
+volumes:
+  pg-data:
