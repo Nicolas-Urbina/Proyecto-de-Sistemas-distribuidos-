@@ -6,6 +6,8 @@ const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
 
 const MODULO_B_URL = process.env.MODULO_B_URL || 'http://modulo-b:5000/transacciones';
+const MODULO_B_PEDIDOS_URL = process.env.MODULO_B_PEDIDOS_URL || 'http://modulo-b:5000/pedidos';
+const MODULO_B_ASIGNAR_URL = process.env.MODULO_B_ASIGNAR_URL || 'http://modulo-b:5000/entregas/asignar';
 const MODULO_C_URL = process.env.MODULO_C_URL || 'http://modulo-c:6001/auditoria';
 
 // Middlewares
@@ -37,6 +39,11 @@ interface PedidoRequest {
   cliente: string;
   direccion: string;
   descripcion: string;
+}
+
+interface AsignacionRequest {
+  pedido_id: string;
+  repartidor: string;
 }
 
 // puerta de enlace 
@@ -236,6 +243,134 @@ app.post('/api/pedidos', async (req: Request, res: Response) => {
   } catch (error: unknown) {
     const mensaje = error instanceof Error ? error.message : 'Error desconocido';
     console.error('Error de red interna al crear pedido:', mensaje);
+    return res.status(503).json({
+      error: 'Error de comunicación en red distribuida',
+      mensaje
+    });
+  }
+});
+
+// Consulta pedidos: el gateway no persiste ni transforma la respuesta de B.
+app.get('/api/pedidos', async (_req: Request, res: Response) => {
+  try {
+    const resModuloB = await fetch(MODULO_B_PEDIDOS_URL);
+    const contenido = await resModuloB.text();
+
+    if (!resModuloB.ok) {
+      return res.status(502).json({
+        error: 'Fallo al consultar pedidos en Módulo B',
+        status: resModuloB.status,
+        detalle: contenido
+      });
+    }
+
+    try {
+      return res.status(resModuloB.status).json(JSON.parse(contenido));
+    } catch {
+      return res.status(502).json({
+        error: 'Respuesta inválida de Módulo B',
+        mensaje: 'El servicio de pedidos no devolvió JSON válido.'
+      });
+    }
+  } catch (error: unknown) {
+    const mensaje = error instanceof Error ? error.message : 'Error desconocido';
+    console.error('Error de red al consultar pedidos:', mensaje);
+    return res.status(503).json({
+      error: 'Error de comunicación en red distribuida',
+      mensaje
+    });
+  }
+});
+
+// Asigna un repartidor y registra el evento en el servicio de auditoría.
+app.post('/api/entregas/asignar', async (req: Request, res: Response) => {
+  const body: unknown = req.body;
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return res.status(400).json({
+      error: 'Payload inválido',
+      mensaje: 'El cuerpo de la solicitud debe ser un objeto JSON.'
+    });
+  }
+
+  const payload = body as Partial<AsignacionRequest>;
+  const { pedido_id, repartidor } = payload;
+  if (
+    typeof pedido_id !== 'string' ||
+    !pedido_id.trim() ||
+    typeof repartidor !== 'string' ||
+    !repartidor.trim()
+  ) {
+    return res.status(400).json({
+      error: 'Payload inválido',
+      mensaje: 'Los campos pedido_id y repartidor son obligatorios.'
+    });
+  }
+
+  const asignacion = {
+    pedido_id: pedido_id.trim(),
+    repartidor: repartidor.trim()
+  };
+
+  try {
+    const resModuloB = await fetch(MODULO_B_ASIGNAR_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(asignacion)
+    });
+
+    const contenidoB = await resModuloB.text();
+    if (!resModuloB.ok) {
+      return res.status(502).json({
+        error: 'Fallo al asignar la entrega en Módulo B',
+        status: resModuloB.status,
+        detalle: contenidoB
+      });
+    }
+
+    let dataB: unknown;
+    try {
+      dataB = JSON.parse(contenidoB);
+    } catch {
+      return res.status(502).json({
+        error: 'Respuesta inválida de Módulo B',
+        mensaje: 'El servicio de entregas no devolvió JSON válido.'
+      });
+    }
+
+    const payloadHash = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(asignacion))
+      .digest('hex');
+    const origenIp = req.ip || req.socket.remoteAddress || '127.0.0.1';
+    const resModuloC = await fetch(MODULO_C_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transaccion_id: asignacion.pedido_id,
+        descripcion: `Repartidor asignado: ${asignacion.repartidor}`,
+        evento: 'REPARTIDOR_ASIGNADO',
+        origen_ip: origenIp,
+        payload_hash: payloadHash
+      })
+    });
+
+    if (!resModuloC.ok) {
+      const errC = await resModuloC.text();
+      return res.status(502).json({
+        error: 'Fallo al auditar la asignación en Módulo C',
+        status: resModuloC.status,
+        detalle: errC
+      });
+    }
+
+    const dataC: AuditoriaRespuestaC = await resModuloC.json();
+    return res.status(201).json({
+      entrega: dataB,
+      auditoria: dataC
+    });
+  } catch (error: unknown) {
+    const mensaje = error instanceof Error ? error.message : 'Error desconocido';
+    console.error('Error de red al asignar entrega:', mensaje);
     return res.status(503).json({
       error: 'Error de comunicación en red distribuida',
       mensaje

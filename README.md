@@ -68,6 +68,63 @@ El pedido se persiste usando el servicio existente del Módulo B y se registra
 en la auditoría del Módulo C con el evento `PEDIDO_CREADO`. La respuesta incluye
 el identificador del pedido, su estado y la auditoría asociada.
 
+### Consultar pedidos
+
+```http
+GET http://localhost:8080/api/pedidos
+```
+
+Módulo A reenvía esta solicitud a `GET /pedidos` del Módulo B y devuelve su
+respuesta JSON sin asumir cómo se almacenan los datos. El contrato de respuesta
+que debe implementar B es:
+
+```json
+{
+  "pedidos": [
+    {
+      "pedido_id": "ped-001",
+      "cliente": "Juan Pérez",
+      "direccion": "Av. Siempre Viva 123",
+      "descripcion": "Paquete de documentos",
+      "estado": "pendiente"
+    }
+  ]
+}
+```
+
+### Asignar repartidor
+
+```http
+POST http://localhost:8080/api/entregas/asignar
+Content-Type: application/json
+```
+
+Body enviado por el cliente y reenviado sin transformación a B:
+
+```json
+{
+  "pedido_id": "ped-001",
+  "repartidor": "Carlos Gómez"
+}
+```
+
+Módulo B debe implementar `POST /entregas/asignar` y responder, por ejemplo:
+
+```json
+{
+  "pedido_id": "ped-001",
+  "repartidor": "Carlos Gómez",
+  "estado": "asignada"
+}
+```
+
+Si B responde correctamente, A registra el evento `REPARTIDOR_ASIGNADO` en C
+y devuelve la respuesta de B junto con la auditoría. A no guarda datos ni conoce
+el esquema de PostgreSQL.
+
+Para cambiar las rutas internas sin modificar A, se pueden configurar
+`MODULO_B_PEDIDOS_URL` y `MODULO_B_ASIGNAR_URL`.
+
 ### Transacciones
 
 El gateway recibe transacciones mediante:

@@ -9,6 +9,8 @@ services:
     environment:
       PORT: "8080"
       MODULO_B_URL: http://modulo-b:5000/transacciones/
+      MODULO_B_PEDIDOS_URL: http://modulo-b:5000/pedidos
+      MODULO_B_ASIGNAR_URL: http://modulo-b:5000/entregas/asignar
       MODULO_C_URL: http://modulo-c:6001/api/auditoria
     depends_on:
       modulo-b:
