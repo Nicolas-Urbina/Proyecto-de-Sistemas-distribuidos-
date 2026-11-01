@@ -33,6 +33,12 @@ interface AuditoriaRespuestaC {
   timestamp: string;
 }
 
+interface PedidoRequest {
+  cliente: string;
+  direccion: string;
+  descripcion: string;
+}
+
 // puerta de enlace 
 app.post('/api/transacciones', async (req: Request, res: Response) => {
   const body: unknown = req.body;
@@ -126,6 +132,113 @@ app.post('/api/transacciones', async (req: Request, res: Response) => {
     return res.status(503).json({
       error: 'Error de comunicación en red distribuida',
       mensaje: error.message
+    });
+  }
+});
+
+// Crea un pedido 
+app.post('/api/pedidos', async (req: Request, res: Response) => {
+  const body: unknown = req.body;
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return res.status(400).json({
+      error: 'Payload inválido',
+      mensaje: 'El cuerpo de la solicitud debe ser un objeto JSON.'
+    });
+  }
+
+  const payload = body as Partial<PedidoRequest>;
+  const { cliente, direccion, descripcion } = payload;
+  if (
+    typeof cliente !== 'string' ||
+    !cliente.trim() ||
+    typeof direccion !== 'string' ||
+    !direccion.trim() ||
+    typeof descripcion !== 'string' ||
+    !descripcion.trim()
+  ) {
+    return res.status(400).json({
+      error: 'Payload inválido',
+      mensaje: 'Los campos cliente, direccion y descripcion son obligatorios.'
+    });
+  }
+
+  const pedido = {
+    cliente: cliente.trim(),
+    direccion: direccion.trim(),
+    descripcion: descripcion.trim()
+  };
+
+  try {
+    const resModuloB = await fetch(MODULO_B_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        monto: 0,
+        moneda: 'N/A',
+        cuenta_origen: pedido.cliente,
+        cuenta_destino: pedido.direccion,
+        descripcion: pedido.descripcion
+      })
+    });
+
+    if (!resModuloB.ok) {
+      const errB = await resModuloB.text();
+      return res.status(502).json({
+        error: 'Fallo al registrar el pedido en Módulo B',
+        status: resModuloB.status,
+        detalle: errB
+      });
+    }
+
+    const dataB: TransaccionRespuestaB = await resModuloB.json();
+    const payloadHash = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(pedido))
+      .digest('hex');
+    const origenIp = req.ip || req.socket.remoteAddress || '127.0.0.1';
+
+    const resModuloC = await fetch(MODULO_C_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cuenta_origen: pedido.cliente,
+        cuenta_destino: pedido.direccion,
+        descripcion: pedido.descripcion,
+        transaccion_id: dataB.transaccion_id,
+        evento: 'PEDIDO_CREADO',
+        origen_ip: origenIp,
+        payload_hash: payloadHash
+      })
+    });
+
+    if (!resModuloC.ok) {
+      const errC = await resModuloC.text();
+      return res.status(502).json({
+        error: 'Fallo al auditar el pedido en Módulo C',
+        status: resModuloC.status,
+        detalle: errC
+      });
+    }
+
+    const dataC: AuditoriaRespuestaC = await resModuloC.json();
+    return res.status(201).json({
+      mensaje: 'Pedido creado exitosamente',
+      pedido: {
+        pedido_id: dataB.transaccion_id,
+        cliente: pedido.cliente,
+        direccion: pedido.direccion,
+        descripcion: pedido.descripcion,
+        estado: dataB.estado,
+        fecha: dataB.marca_de_tiempo
+      },
+      auditoria: dataC
+    });
+  } catch (error: unknown) {
+    const mensaje = error instanceof Error ? error.message : 'Error desconocido';
+    console.error('Error de red interna al crear pedido:', mensaje);
+    return res.status(503).json({
+      error: 'Error de comunicación en red distribuida',
+      mensaje
     });
   }
 });

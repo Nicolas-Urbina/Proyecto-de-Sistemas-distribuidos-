@@ -44,6 +44,32 @@ docker compose down -v
 
 ## Endpoint principal
 
+### Crear un pedido
+
+El gateway también permite registrar un pedido mediante el flujo completo
+Módulo A → Módulo B → Módulo C:
+
+```http
+POST http://localhost:8080/api/pedidos
+Content-Type: application/json
+```
+
+Ejemplo de cuerpo:
+
+```json
+{
+  "cliente": "Juan Pérez",
+  "direccion": "Av. Siempre Viva 123",
+  "descripcion": "Paquete de documentos"
+}
+```
+
+El pedido se persiste usando el servicio existente del Módulo B y se registra
+en la auditoría del Módulo C con el evento `PEDIDO_CREADO`. La respuesta incluye
+el identificador del pedido, su estado y la auditoría asociada.
+
+### Transacciones
+
 El gateway recibe transacciones mediante:
 
 ```http
