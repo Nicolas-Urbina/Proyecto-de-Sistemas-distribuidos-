@@ -123,7 +123,64 @@ y devuelve la respuesta de B junto con la auditoría. A no guarda datos ni conoc
 el esquema de PostgreSQL.
 
 Para cambiar las rutas internas sin modificar A, se pueden configurar
-`MODULO_B_PEDIDOS_URL` y `MODULO_B_ASIGNAR_URL`.
+`MODULO_B_PEDIDOS_URL`, `MODULO_B_ASIGNAR_URL`, `MODULO_B_ESTADO_URL` y
+`MODULO_B_SEGUIMIENTO_URL`.
+
+### Actualizar estado de entrega
+
+```http
+PATCH http://localhost:8080/api/entregas/{pedido_id}/estado
+Content-Type: application/json
+```
+
+Body:
+
+```json
+{
+  "estado": "en_camino"
+}
+```
+
+Módulo A reenvía `PATCH /entregas/{pedido_id}/estado` a B. B debe devolver el
+pedido actualizado, por ejemplo:
+
+```json
+{
+  "pedido_id": "ped-001",
+  "estado": "en_camino"
+}
+```
+
+Luego A registra en C el evento `ESTADO_ENTREGA_ACTUALIZADO` y devuelve la
+respuesta de B junto con la auditoría. Los estados sugeridos son `pendiente`,
+`asignada`, `en_camino`, `entregada` y `cancelada`; B es responsable de
+validar las transiciones.
+
+### Consultar seguimiento
+
+```http
+GET http://localhost:8080/api/entregas/{pedido_id}
+```
+
+A reenvía la solicitud a `GET /pedidos/{pedido_id}/seguimiento` de B y devuelve
+su respuesta JSON sin conocer cómo se almacena el historial. B puede responder:
+
+```json
+{
+  "pedido_id": "ped-001",
+  "estado_actual": "en_camino",
+  "historial": [
+    {
+      "estado": "pendiente",
+      "fecha": "2026-11-01T15:00:00Z"
+    },
+    {
+      "estado": "en_camino",
+      "fecha": "2026-11-01T15:10:00Z"
+    }
+  ]
+}
+```
 
 ### Transacciones
 

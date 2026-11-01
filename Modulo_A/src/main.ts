@@ -8,6 +8,8 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
 const MODULO_B_URL = process.env.MODULO_B_URL || 'http://modulo-b:5000/transacciones';
 const MODULO_B_PEDIDOS_URL = process.env.MODULO_B_PEDIDOS_URL || 'http://modulo-b:5000/pedidos';
 const MODULO_B_ASIGNAR_URL = process.env.MODULO_B_ASIGNAR_URL || 'http://modulo-b:5000/entregas/asignar';
+const MODULO_B_ESTADO_URL = process.env.MODULO_B_ESTADO_URL || 'http://modulo-b:5000/entregas';
+const MODULO_B_SEGUIMIENTO_URL = process.env.MODULO_B_SEGUIMIENTO_URL || 'http://modulo-b:5000/pedidos';
 const MODULO_C_URL = process.env.MODULO_C_URL || 'http://modulo-c:6001/auditoria';
 
 // Middlewares
@@ -44,6 +46,10 @@ interface PedidoRequest {
 interface AsignacionRequest {
   pedido_id: string;
   repartidor: string;
+}
+
+interface EstadoEntregaRequest {
+  estado: string;
 }
 
 // puerta de enlace 
@@ -371,6 +377,151 @@ app.post('/api/entregas/asignar', async (req: Request, res: Response) => {
   } catch (error: unknown) {
     const mensaje = error instanceof Error ? error.message : 'Error desconocido';
     console.error('Error de red al asignar entrega:', mensaje);
+    return res.status(503).json({
+      error: 'Error de comunicación en red distribuida',
+      mensaje
+    });
+  }
+});
+
+// Actualiza el estado en B y registra el cambio en C.
+app.patch('/api/entregas/:pedido_id/estado', async (req: Request, res: Response) => {
+  const pedidoIdParam = req.params.pedido_id;
+  if (typeof pedidoIdParam !== 'string' || !pedidoIdParam.trim()) {
+    return res.status(400).json({
+      error: 'Payload inválido',
+      mensaje: 'El pedido_id es obligatorio.'
+    });
+  }
+  const pedidoId = pedidoIdParam.trim();
+
+  const body: unknown = req.body;
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return res.status(400).json({
+      error: 'Payload inválido',
+      mensaje: 'El cuerpo de la solicitud debe ser un objeto JSON.'
+    });
+  }
+
+  const payload = body as Partial<EstadoEntregaRequest>;
+  if (typeof payload.estado !== 'string' || !payload.estado.trim()) {
+    return res.status(400).json({
+      error: 'Payload inválido',
+      mensaje: 'El campo estado es obligatorio.'
+    });
+  }
+
+  const actualizacion = {
+    pedido_id: pedidoId,
+    estado: payload.estado.trim()
+  };
+
+  try {
+    const resModuloB = await fetch(
+      `${MODULO_B_ESTADO_URL}/${encodeURIComponent(pedidoId)}/estado`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: actualizacion.estado })
+      }
+    );
+    const contenidoB = await resModuloB.text();
+
+    if (!resModuloB.ok) {
+      return res.status(502).json({
+        error: 'Fallo al actualizar el estado en Módulo B',
+        status: resModuloB.status,
+        detalle: contenidoB
+      });
+    }
+
+    let dataB: unknown;
+    try {
+      dataB = JSON.parse(contenidoB);
+    } catch {
+      return res.status(502).json({
+        error: 'Respuesta inválida de Módulo B',
+        mensaje: 'El servicio de entregas no devolvió JSON válido.'
+      });
+    }
+
+    const payloadHash = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(actualizacion))
+      .digest('hex');
+    const origenIp = req.ip || req.socket.remoteAddress || '127.0.0.1';
+    const resModuloC = await fetch(MODULO_C_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transaccion_id: pedidoId,
+        descripcion: `Estado actualizado a: ${actualizacion.estado}`,
+        evento: 'ESTADO_ENTREGA_ACTUALIZADO',
+        origen_ip: origenIp,
+        payload_hash: payloadHash
+      })
+    });
+
+    if (!resModuloC.ok) {
+      const errC = await resModuloC.text();
+      return res.status(502).json({
+        error: 'Fallo al auditar el cambio de estado en Módulo C',
+        status: resModuloC.status,
+        detalle: errC
+      });
+    }
+
+    const dataC: AuditoriaRespuestaC = await resModuloC.json();
+    return res.status(200).json({
+      entrega: dataB,
+      auditoria: dataC
+    });
+  } catch (error: unknown) {
+    const mensaje = error instanceof Error ? error.message : 'Error desconocido';
+    console.error('Error de red al actualizar estado:', mensaje);
+    return res.status(503).json({
+      error: 'Error de comunicación en red distribuida',
+      mensaje
+    });
+  }
+});
+
+// Consulta el historial directamente en B sin conocer su almacenamiento.
+app.get('/api/entregas/:pedido_id', async (req: Request, res: Response) => {
+  const pedidoIdParam = req.params.pedido_id;
+  if (typeof pedidoIdParam !== 'string' || !pedidoIdParam.trim()) {
+    return res.status(400).json({
+      error: 'Payload inválido',
+      mensaje: 'El pedido_id es obligatorio.'
+    });
+  }
+  const pedidoId = pedidoIdParam.trim();
+
+  try {
+    const resModuloB = await fetch(
+      `${MODULO_B_SEGUIMIENTO_URL}/${encodeURIComponent(pedidoId)}/seguimiento`
+    );
+    const contenido = await resModuloB.text();
+
+    if (!resModuloB.ok) {
+      return res.status(502).json({
+        error: 'Fallo al consultar el seguimiento en Módulo B',
+        status: resModuloB.status,
+        detalle: contenido
+      });
+    }
+
+    try {
+      return res.status(resModuloB.status).json(JSON.parse(contenido));
+    } catch {
+      return res.status(502).json({
+        error: 'Respuesta inválida de Módulo B',
+        mensaje: 'El servicio de seguimiento no devolvió JSON válido.'
+      });
+    }
+  } catch (error: unknown) {
+    const mensaje = error instanceof Error ? error.message : 'Error desconocido';
+    console.error('Error de red al consultar seguimiento:', mensaje);
     return res.status(503).json({
       error: 'Error de comunicación en red distribuida',
       mensaje
