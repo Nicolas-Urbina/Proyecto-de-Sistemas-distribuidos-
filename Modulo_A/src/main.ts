@@ -10,6 +10,7 @@ const MODULO_B_PEDIDOS_URL = process.env.MODULO_B_PEDIDOS_URL || 'http://modulo-
 const MODULO_B_ASIGNAR_URL = process.env.MODULO_B_ASIGNAR_URL || 'http://modulo-b:5000/entregas/asignar';
 const MODULO_B_ESTADO_URL = process.env.MODULO_B_ESTADO_URL || 'http://modulo-b:5000/entregas';
 const MODULO_B_SEGUIMIENTO_URL = process.env.MODULO_B_SEGUIMIENTO_URL || 'http://modulo-b:5000/pedidos';
+const MODULO_B_CANCELAR_URL = process.env.MODULO_B_CANCELAR_URL || 'http://modulo-b:5000/transacciones';
 const MODULO_C_URL = process.env.MODULO_C_URL || 'http://modulo-c:6001/auditoria';
 
 // Middlewares
@@ -52,6 +53,19 @@ interface EstadoEntregaRequest {
   estado: string;
 }
 
+async function compensarTransaccion(transaccionId: string): Promise<boolean> {
+  try {
+    const respuesta = await fetch(`${MODULO_B_CANCELAR_URL}/${encodeURIComponent(transaccionId)}`, {
+      method: 'DELETE'
+    });
+    return respuesta.ok;
+  } catch (error: unknown) {
+    const mensaje = error instanceof Error ? error.message : 'Error desconocido';
+    console.error('No se pudo compensar la operación en Módulo B:', mensaje);
+    return false;
+  }
+}
+
 // puerta de enlace 
 app.post('/api/transacciones', async (req: Request, res: Response) => {
   const body: unknown = req.body;
@@ -73,6 +87,7 @@ app.post('/api/transacciones', async (req: Request, res: Response) => {
     });
   }
 
+  let transaccionId: string | undefined;
   try {
     // 2. Paso 1 del flujo: Petición HTTP al Módulo B (Dominio / PostgreSQL)
     const resModuloB = await fetch(MODULO_B_URL, {
@@ -97,6 +112,7 @@ app.post('/api/transacciones', async (req: Request, res: Response) => {
     }
 
     const dataB: TransaccionRespuestaB = await resModuloB.json();
+    transaccionId = dataB.transaccion_id;
 
     // 3. Paso 2 del flujo: Generar hash SHA-256 y notificar al Módulo C (Auditoría / MongoDB)
     const payloadHash = crypto
@@ -124,10 +140,12 @@ app.post('/api/transacciones', async (req: Request, res: Response) => {
 
     if (!resModuloC.ok) {
       const errC = await resModuloC.text();
+      const compensada = await compensarTransaccion(dataB.transaccion_id);
       return res.status(502).json({
         error: 'Fallo al auditar con Módulo C',
         status: resModuloC.status,
-        detalle: errC
+        detalle: errC,
+        compensacion: compensada ? 'La operación fue revertida en PostgreSQL.' : 'No se pudo revertir PostgreSQL.'
       });
     }
 
@@ -140,11 +158,15 @@ app.post('/api/transacciones', async (req: Request, res: Response) => {
       auditoria: dataC
     });
 
-  } catch (error: any) {
-    console.error('Error de red interna en Módulo A:', error.message);
+  } catch (error: unknown) {
+    if (transaccionId) {
+      await compensarTransaccion(transaccionId);
+    }
+    const mensaje = error instanceof Error ? error.message : 'Error desconocido';
+    console.error('Error de red interna en Módulo A:', mensaje);
     return res.status(503).json({
       error: 'Error de comunicación en red distribuida',
-      mensaje: error.message
+      mensaje
     });
   }
 });
@@ -181,6 +203,7 @@ app.post('/api/pedidos', async (req: Request, res: Response) => {
     descripcion: descripcion.trim()
   };
 
+  let pedidoIdCreado: string | undefined;
   try {
     const resModuloB = await fetch(MODULO_B_URL, {
       method: 'POST',
@@ -204,6 +227,7 @@ app.post('/api/pedidos', async (req: Request, res: Response) => {
     }
 
     const dataB: TransaccionRespuestaB = await resModuloB.json();
+    pedidoIdCreado = dataB.transaccion_id;
     const payloadHash = crypto
       .createHash('sha256')
       .update(JSON.stringify(pedido))
@@ -226,10 +250,12 @@ app.post('/api/pedidos', async (req: Request, res: Response) => {
 
     if (!resModuloC.ok) {
       const errC = await resModuloC.text();
+      const compensada = await compensarTransaccion(dataB.transaccion_id);
       return res.status(502).json({
         error: 'Fallo al auditar el pedido en Módulo C',
         status: resModuloC.status,
-        detalle: errC
+        detalle: errC,
+        compensacion: compensada ? 'El pedido fue revertido en PostgreSQL.' : 'No se pudo revertir PostgreSQL.'
       });
     }
 
@@ -247,6 +273,9 @@ app.post('/api/pedidos', async (req: Request, res: Response) => {
       auditoria: dataC
     });
   } catch (error: unknown) {
+    if (pedidoIdCreado) {
+      await compensarTransaccion(pedidoIdCreado);
+    }
     const mensaje = error instanceof Error ? error.message : 'Error desconocido';
     console.error('Error de red interna al crear pedido:', mensaje);
     return res.status(503).json({
@@ -286,6 +315,120 @@ app.get('/api/pedidos', async (_req: Request, res: Response) => {
       mensaje
     });
   }
+});
+
+// Consulta las auditorías persistidas en MongoDB a través del gateway.
+app.get('/api/auditoria', async (_req: Request, res: Response) => {
+  try {
+    const resModuloC = await fetch(MODULO_C_URL);
+    const contenido = await resModuloC.text();
+
+    if (!resModuloC.ok) {
+      return res.status(resModuloC.status === 503 ? 503 : 502).json({
+        error: 'Fallo al consultar auditorías en Módulo C',
+        status: resModuloC.status,
+        detalle: contenido
+      });
+    }
+
+    try {
+      return res.status(200).json(JSON.parse(contenido));
+    } catch {
+      return res.status(502).json({
+        error: 'Respuesta inválida de Módulo C',
+        mensaje: 'El servicio de auditoría no devolvió JSON válido.'
+      });
+    }
+  } catch (error: unknown) {
+    const mensaje = error instanceof Error ? error.message : 'Error desconocido';
+    console.error('Error de red al consultar auditorías:', mensaje);
+    return res.status(503).json({
+      error: 'Error de comunicación en red distribuida',
+      mensaje
+    });
+  }
+});
+
+// Elimina una transacción/pedido y sus auditorías asociadas.
+app.delete('/api/transacciones/:transaccion_id', async (req: Request, res: Response) => {
+  const transaccionId = req.params.transaccion_id;
+  if (typeof transaccionId !== 'string' || !transaccionId.trim()) {
+    return res.status(400).json({
+      error: 'Payload inválido',
+      mensaje: 'El transaccion_id es obligatorio.'
+    });
+  }
+
+  try {
+    const resModuloB = await fetch(
+      `${MODULO_B_CANCELAR_URL}/${encodeURIComponent(transaccionId.trim())}`,
+      { method: 'DELETE' }
+    );
+    const contenidoB = await resModuloB.text();
+    if (!resModuloB.ok) {
+      return res.status(resModuloB.status === 404 ? 404 : 502).json({
+        error: 'No se pudo eliminar la transacción en Módulo B',
+        status: resModuloB.status,
+        detalle: contenidoB
+      });
+    }
+
+    const resModuloC = await fetch(
+      `${MODULO_C_URL}?transaccion_id=${encodeURIComponent(transaccionId.trim())}`,
+      { method: 'DELETE' }
+    );
+    const contenidoC = await resModuloC.text();
+    if (!resModuloC.ok) {
+      return res.status(503).json({
+        error: 'La transacción fue eliminada, pero no se pudo eliminar su auditoría',
+        status: resModuloC.status,
+        detalle: contenidoC
+      });
+    }
+
+    let auditoria: unknown;
+    try {
+      auditoria = JSON.parse(contenidoC);
+    } catch {
+      auditoria = { detalle: contenidoC };
+    }
+    return res.status(200).json({
+      mensaje: 'Transacción y auditorías eliminadas',
+      transaccion_id: transaccionId.trim(),
+      auditoria
+    });
+  } catch (error: unknown) {
+    const mensaje = error instanceof Error ? error.message : 'Error desconocido';
+    console.error('Error de red al eliminar la transacción:', mensaje);
+    return res.status(503).json({
+      error: 'Error de comunicación en red distribuida',
+      mensaje
+    });
+  }
+});
+
+// Comprueba que las dos bases de datos respondan antes de probar una operación.
+app.get('/api/salud', async (_req: Request, res: Response) => {
+  const [postgres, mongo] = await Promise.all([
+    fetch(`${MODULO_B_URL.replace(/\/transacciones\/?$/, '')}/bd/listo`),
+    fetch(`${MODULO_C_URL.replace(/\/api\/auditoria\/?$/, '')}/health`)
+  ].map(async (promesa) => {
+    try {
+      const respuesta = await promesa;
+      return { disponible: respuesta.ok, http: respuesta.status };
+    } catch {
+      return { disponible: false, http: null };
+    }
+  }));
+
+  const disponible = postgres.disponible && mongo.disponible;
+  return res.status(disponible ? 200 : 503).json({
+    estado: disponible ? 'ok' : 'degradado',
+    bases_de_datos: {
+      postgres,
+      mongo
+    }
+  });
 });
 
 // Asigna un repartidor y registra el evento en el servicio de auditoría.

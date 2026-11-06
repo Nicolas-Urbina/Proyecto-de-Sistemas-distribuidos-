@@ -13,6 +13,7 @@ services:
       MODULO_B_ASIGNAR_URL: http://modulo-b:5000/entregas/asignar
       MODULO_B_ESTADO_URL: http://modulo-b:5000/entregas
       MODULO_B_SEGUIMIENTO_URL: http://modulo-b:5000/pedidos
+      MODULO_B_CANCELAR_URL: http://modulo-b:5000/transacciones
       MODULO_C_URL: http://modulo-c:6001/api/auditoria
     depends_on:
       modulo-b:
@@ -96,6 +97,9 @@ services:
       retries: 10
     networks:
       - db-relacional-net
+      - db-relacional-admin-net
+    ports:
+      - "127.0.0.1:5432:5432"
 
   db-nosql:
     image: mongo:7
@@ -127,6 +131,8 @@ networks:
   db-relacional-net:
     driver: bridge
     internal: true
+  db-relacional-admin-net:
+    driver: bridge
 
 volumes:
   mongo-data:

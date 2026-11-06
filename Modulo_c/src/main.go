@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -57,8 +56,7 @@ type RespuestaEstado struct {
 
 var (
 	coleccionAuditoria *mongo.Collection
-	mutexMemoria       sync.RWMutex
-	memoriaAuditoria   = make([]RegistroAuditoria, 0)
+	clienteMongo       *mongo.Client
 )
 
 func main() {
@@ -81,16 +79,17 @@ func main() {
 	contexto, cancelar := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelar()
 
-	clienteMongo, errorConexion := mongo.Connect(contexto, options.Client().ApplyURI(urlMongo))
+	cliente, errorConexion := mongo.Connect(contexto, options.Client().ApplyURI(urlMongo))
 	if errorConexion != nil {
 		fmt.Println("[AVISO] No se pudo conectar a MongoDB:", errorConexion)
 	} else {
-		errorPing := clienteMongo.Ping(contexto, nil)
+		errorPing := cliente.Ping(contexto, nil)
 		if errorPing != nil {
 			fmt.Println("[AVISO] MongoDB no respondió al ping:", errorPing)
 		} else {
 			fmt.Println("[OK] Conectado exitosamente a MongoDB en:", urlMongo)
-			coleccionAuditoria = clienteMongo.Database(nombreDB).Collection("historial_transacciones")
+			clienteMongo = cliente
+			coleccionAuditoria = cliente.Database(nombreDB).Collection("historial_transacciones")
 		}
 	}
 
@@ -131,6 +130,16 @@ func manejarRaiz(respuesta http.ResponseWriter, peticion *http.Request) {
 func manejarEstadoServidor(respuesta http.ResponseWriter, peticion *http.Request) {
 	respuesta.Header().Set("Content-Type", "application/json")
 	respuesta.Header().Set("Access-Control-Allow-Origin", "*")
+	if clienteMongo == nil {
+		http.Error(respuesta, `{"error":"MongoDB no disponible"}`, http.StatusServiceUnavailable)
+		return
+	}
+	contexto, cancelar := context.WithTimeout(peticion.Context(), 2*time.Second)
+	defer cancelar()
+	if err := clienteMongo.Ping(contexto, nil); err != nil {
+		http.Error(respuesta, `{"error":"MongoDB no disponible"}`, http.StatusServiceUnavailable)
+		return
+	}
 	respuesta.WriteHeader(http.StatusOK)
 	respuesta.Write([]byte(`{"mensaje": "El servidor Modulo C (Go) esta activo", "estado": "exitoso"}`))
 }
@@ -139,7 +148,7 @@ func manejarEstadoServidor(respuesta http.ResponseWriter, peticion *http.Request
 func manejarAuditoria(respuesta http.ResponseWriter, peticion *http.Request) {
 	respuesta.Header().Set("Content-Type", "application/json")
 	respuesta.Header().Set("Access-Control-Allow-Origin", "*")
-	respuesta.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+	respuesta.Header().Set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS")
 	respuesta.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 	if peticion.Method == http.MethodOptions {
@@ -188,25 +197,21 @@ func manejarAuditoria(respuesta http.ResponseWriter, peticion *http.Request) {
 
 		idString := nuevaID.Hex()
 
-		// Guardar siempre en memoria (útil para pruebas locales sin base de datos)
-		mutexMemoria.Lock()
-		memoriaAuditoria = append(memoriaAuditoria, nuevaTraza)
-		mutexMemoria.Unlock()
-
-		// Guardar en MongoDB si está disponible
-		if coleccionAuditoria != nil {
-			contextoGuardado, cancelarGuardado := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancelarGuardado()
-
-			_, errorInsertar := coleccionAuditoria.InsertOne(contextoGuardado, nuevaTraza)
-			if errorInsertar != nil {
-				fmt.Println("[ERROR] No se pudo guardar la auditoria en MongoDB:", errorInsertar)
-			} else {
-				fmt.Printf("[OK] Auditoria registrada en MongoDB | ID: %s | TransaccionID: %s\n", idString, entrada.TransaccionID)
-			}
-		} else {
-			fmt.Printf("[AVISO] MongoDB desconectado. Traza registrada en memoria local | ID: %s\n", idString)
+		if coleccionAuditoria == nil {
+			respuesta.WriteHeader(http.StatusServiceUnavailable)
+			respuesta.Write([]byte(`{"error": "MongoDB no disponible", "mensaje": "La auditoría no se registró."}`))
+			return
 		}
+
+		contextoGuardado, cancelarGuardado := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancelarGuardado()
+		if _, errorInsertar := coleccionAuditoria.InsertOne(contextoGuardado, nuevaTraza); errorInsertar != nil {
+			fmt.Println("[ERROR] No se pudo guardar la auditoria en MongoDB:", errorInsertar)
+			respuesta.WriteHeader(http.StatusServiceUnavailable)
+			respuesta.Write([]byte(`{"error": "MongoDB no disponible", "mensaje": "La auditoría no se registró."}`))
+			return
+		}
+		fmt.Printf("[OK] Auditoria registrada en MongoDB | ID: %s | TransaccionID: %s\n", idString, entrada.TransaccionID)
 
 		// Responder al Módulo A exactamente con la estructura esperada
 		respuesta.WriteHeader(http.StatusCreated)
@@ -219,32 +224,72 @@ func manejarAuditoria(respuesta http.ResponseWriter, peticion *http.Request) {
 	case http.MethodGet:
 		listaDeTrazas := make([]RegistroAuditoria, 0)
 
-		if coleccionAuditoria != nil {
-			contextoConsulta, cancelarConsulta := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancelarConsulta()
+		if coleccionAuditoria == nil {
+			respuesta.WriteHeader(http.StatusServiceUnavailable)
+			respuesta.Write([]byte(`{"error": "MongoDB no disponible"}`))
+			return
+		}
 
-			cursor, errorConsulta := coleccionAuditoria.Find(contextoConsulta, bson.M{})
-			if errorConsulta == nil {
-				defer cursor.Close(contextoConsulta)
-				for cursor.Next(contextoConsulta) {
-					var traza RegistroAuditoria
-					if err := cursor.Decode(&traza); err == nil {
-						listaDeTrazas = append(listaDeTrazas, traza)
-					}
-				}
+		contextoConsulta, cancelarConsulta := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelarConsulta()
+		cursor, errorConsulta := coleccionAuditoria.Find(contextoConsulta, bson.M{})
+		if errorConsulta != nil {
+			respuesta.WriteHeader(http.StatusServiceUnavailable)
+			respuesta.Write([]byte(`{"error": "No se pudo consultar MongoDB"}`))
+			return
+		}
+		defer cursor.Close(contextoConsulta)
+		for cursor.Next(contextoConsulta) {
+			var traza RegistroAuditoria
+			if err := cursor.Decode(&traza); err != nil {
+				respuesta.WriteHeader(http.StatusInternalServerError)
+				respuesta.Write([]byte(`{"error": "No se pudo leer una auditoría"}`))
+				return
 			}
-		} else {
-			// Si MongoDB no está corriendo, devolver las trazas almacenadas en memoria
-			mutexMemoria.RLock()
-			listaDeTrazas = append(listaDeTrazas, memoriaAuditoria...)
-			mutexMemoria.RUnlock()
+			listaDeTrazas = append(listaDeTrazas, traza)
+		}
+		if errorCursor := cursor.Err(); errorCursor != nil {
+			respuesta.WriteHeader(http.StatusServiceUnavailable)
+			respuesta.Write([]byte(`{"error": "No se pudo completar la consulta en MongoDB"}`))
+			return
 		}
 
 		respuesta.WriteHeader(http.StatusOK)
 		json.NewEncoder(respuesta).Encode(listaDeTrazas)
 
+	case http.MethodDelete:
+		transaccionID := peticion.URL.Query().Get("transaccion_id")
+		if transaccionID == "" {
+			respuesta.WriteHeader(http.StatusBadRequest)
+			respuesta.Write([]byte(`{"error": "El parámetro transaccion_id es obligatorio"}`))
+			return
+		}
+		if coleccionAuditoria == nil {
+			respuesta.WriteHeader(http.StatusServiceUnavailable)
+			respuesta.Write([]byte(`{"error": "MongoDB no disponible"}`))
+			return
+		}
+
+		contextoEliminacion, cancelarEliminacion := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelarEliminacion()
+		resultado, errorEliminacion := coleccionAuditoria.DeleteMany(
+			contextoEliminacion,
+			bson.M{"transaccion_id": transaccionID},
+		)
+		if errorEliminacion != nil {
+			respuesta.WriteHeader(http.StatusServiceUnavailable)
+			respuesta.Write([]byte(`{"error": "No se pudo eliminar la auditoría en MongoDB"}`))
+			return
+		}
+
+		respuesta.WriteHeader(http.StatusOK)
+		json.NewEncoder(respuesta).Encode(map[string]interface{}{
+			"transaccion_id":        transaccionID,
+			"auditorias_eliminadas": resultado.DeletedCount,
+		})
+
 	default:
 		respuesta.WriteHeader(http.StatusMethodNotAllowed)
-		respuesta.Write([]byte(`{"error": "Metodo no permitido, use POST o GET"}`))
+		respuesta.Write([]byte(`{"error": "Metodo no permitido, use POST, GET o DELETE"}`))
 	}
 }

@@ -358,3 +358,18 @@ def procesar_transaccion(payload: PayloadTransaccion) -> RespuestaTransaccion:
         estado="pendiente" if payload.monto == 0 and payload.moneda == "N/A" else estado,
         marca_de_tiempo=marca_de_tiempo.isoformat(),
     )
+
+
+@app.delete("/transacciones/{transaccion_id}", status_code=204)
+def cancelar_transaccion(transaccion_id: str):
+    with engine.begin() as connection:
+        resultado = connection.execute(
+            text("DELETE FROM transacciones WHERE transaccion_id = CAST(:transaccion_id AS UUID)"),
+            {"transaccion_id": transaccion_id},
+        )
+        connection.execute(
+            text("DELETE FROM pedidos WHERE pedido_id = :pedido_id"),
+            {"pedido_id": transaccion_id},
+        )
+    if resultado.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Transacción no encontrada.")

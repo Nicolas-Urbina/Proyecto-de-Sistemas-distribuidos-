@@ -250,3 +250,121 @@ curl -i http://localhost:8080/api/transacciones
 
 Ese `GET` normalmente devolverá `404`, pero confirma que el gateway está
 respondiendo. Para una prueba real usa el `POST` anterior.
+
+## Verificación de persistencia y salud
+
+El gateway expone endpoints para comprobar las bases sin conectarse directamente
+desde Postman a los contenedores internos:
+
+```http
+GET http://localhost:8080/api/salud
+```
+
+Devuelve `200` solamente cuando PostgreSQL y MongoDB responden. Si alguna base
+no está disponible devuelve `503`, indicando cuál dependencia falló.
+
+Para comprobar los datos guardados:
+
+```http
+GET http://localhost:8080/api/pedidos
+GET http://localhost:8080/api/auditoria
+GET http://localhost:8080/api/entregas/{pedido_id}
+```
+
+`/api/pedidos` consulta PostgreSQL, `/api/auditoria` consulta la colección
+`auditoria_db.historial_transacciones` de MongoDB y `/api/entregas/{pedido_id}`
+consulta el historial del pedido en PostgreSQL. Ninguno devuelve datos de
+memoria si la base correspondiente está caída.
+
+Para eliminar una transacción/pedido y sus auditorías asociadas:
+
+```http
+DELETE http://localhost:8080/api/transacciones/{transaccion_id}
+```
+
+El gateway coordina `DELETE /transacciones/{transaccion_id}` en B y
+`DELETE /auditoria?transaccion_id={transaccion_id}` en C. B elimina de
+PostgreSQL y C elimina todos los registros de auditoría de MongoDB que tengan
+ese identificador. Si la eliminación en C falla después de eliminar B, la
+respuesta será `503` y avisará que puede haber datos pendientes de limpieza.
+Los endpoints internos también pueden probarse dentro de la red:
+
+```http
+DELETE http://modulo-b:5000/transacciones/{transaccion_id}
+DELETE http://modulo-c:6001/auditoria?transaccion_id={transaccion_id}
+```
+
+Cuando se crea una transacción o pedido, A primero solicita el registro a B y
+después registra la auditoría en C. Si C falla, A solicita una compensación a B
+mediante `DELETE /transacciones/{transaccion_id}`; la respuesta informa si esa
+reversión pudo completarse. Esto implementa una transacción compensatoria
+(patrón Saga), no una transacción ACID distribuida. Por eso se debe revisar
+`/api/salud` y los logs si la respuesta indica que la compensación falló.
+
+## Docker: conceptos importantes
+
+### Servicios, DNS y redes
+
+Compose crea una red virtual para los servicios. Dentro de esa red, los nombres
+de servicio funcionan como DNS: por ejemplo, `modulo-b` resuelve al contenedor
+de B y `db-nosql` al de MongoDB. No se debe usar `localhost` entre contenedores,
+porque allí significa “este mismo contenedor”. Docker puede cambiar la IP de un
+contenedor al recrearlo, pero vuelve a resolver el nombre del servicio, por lo
+que los demás servicios no necesitan conocer esa IP.
+
+Este proyecto usa dos redes:
+
+- `distributed-network`: comunicación de A, C y MongoDB.
+- `db-relacional-net`: comunicación privada entre B y PostgreSQL.
+
+Los puertos `expose` son internos. Solo A (`8080`) y MongoDB (`27017`) están
+publicados en el host actualmente. `depends_on` ordena el arranque y los
+`healthcheck` verifican disponibilidad; no reemplaza el manejo de errores de la
+aplicación.
+
+### Comunicación y sockets
+
+Los servicios se comunican mediante HTTP sobre TCP usando los nombres DNS y
+puertos internos (`modulo-b:5000`, `modulo-c:6001`). El “socket” es el extremo
+de esa conexión TCP; no se está usando el `docker.sock` del host. Montar
+`/var/run/docker.sock` no es necesario para este proyecto y daría permisos muy
+amplios al contenedor.
+
+Los volúmenes `pg-data` y `mongo-data` mantienen los datos aunque se recreen
+los contenedores. `docker compose down -v` elimina también esos volúmenes y,
+por tanto, los datos.
+
+## Visualizar las bases de datos
+
+### PostgreSQL con pgAdmin
+
+PostgreSQL no publica un puerto al host, así que hay dos alternativas:
+
+1. Ejecutar pgAdmin como otro contenedor conectado a `db-relacional-net`; usar
+   como servidor `db-relacional`, puerto `5432`, base `${DB_NAME}`, usuario
+   `${DB_USER}` y contraseña `${DB_PASSWORD}`.
+2. Para usar un pgAdmin instalado en el host, publicar temporalmente
+   `5432:5432` en `db-relacional` y conectarse a `localhost:5432`. No se
+   recomienda dejar ese puerto público en un entorno real.
+
+Una vez conectado, las tablas principales son `transacciones`, `pedidos` y
+`seguimiento`.
+
+### MongoDB
+
+MongoDB publica `27017`, por lo que se puede usar MongoDB Compass u otra
+interfaz compatible desde el host con:
+
+```text
+mongodb://localhost:27017
+```
+
+Selecciona la base `auditoria_db` y la colección
+`historial_transacciones`. También se puede consultar desde el contenedor con
+`mongosh`; no es obligatorio instalar un administrador adicional para que el
+sistema funcione, pero Compass es la opción gráfica equivalente a pgAdmin.
+
+
+
+
+endpoint para le get para solicitar datos del mongo db
