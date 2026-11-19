@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Panel Distribuido — Gestión y Monitoreo</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Barra lateral -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">SD</div>
+        <div>
+          <h1>DistriSys</h1>
+          <span>Unidad 3 · Alta Disponibilidad</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-btn active" data-tab="monitoreo">
+          <span class="dot-nav"></span> Monitoreo de Clúster
+        </button>
+        <button class="nav-btn" data-tab="pedidos">
+          <span class="dot-nav"></span> Pedidos y Transacciones
+        </button>
+        <button class="nav-btn" data-tab="auditoria">
+          <span class="dot-nav"></span> Auditoría y Eventos
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="env-badge">
+          <span class="status-dot online"></span>
+          <span>Modo Prototipo (Mock)</span>
+        </div>
+        <p class="endpoint-hint">Gateway: <code>localhost:8080</code></p>
+      </div>
+    </aside>
+
+    <!-- Contenido principal -->
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <h2 id="view-title">Monitoreo de Infraestructura</h2>
+          <p id="view-subtitle">Estado en tiempo real de balanceadores, microservicios y réplicas de BD</p>
+        </div>
+        <div class="topbar-actions">
+          <span class="pill-info">Algoritmo: <strong>Round Robin</strong></span>
+          <span class="pill-info" id="health-summary">Nodos activos: <strong>15 / 15</strong></span>
+        </div>
+      </header>
+
+      <!-- Alerta dinámica para simulaciones de failover -->
+      <div id="alert-banner" class="alert-banner hidden"></div>
+
+      <!-- VISTA 1: MONITOREO -->
+      <section id="tab-monitoreo" class="tab-view active">
+        <div class="sim-toolbar">
+          <div class="sim-info">
+            <strong>Simulador de Resiliencia (Demo)</strong>
+            <span>Prueba visualmente la tolerancia a fallos y el failover automático</span>
+          </div>
+          <div class="sim-buttons">
+            <button class="btn btn-outline-danger" id="btn-fail-app">Simular caída de instancia (Mod A/B)</button>
+            <button class="btn btn-outline-warning" id="btn-fail-pg">Simular Failover PostgreSQL (Patroni)</button>
+            <button class="btn btn-primary" id="btn-restore">Restaurar Clúster</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <span class="kpi-label">Disponibilidad del Sistema</span>
+            <strong class="kpi-value" id="kpi-uptime">99.98%</strong>
+            <span class="kpi-sub">HAProxy Health Checks activos</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Latencia Promedio</span>
+            <strong class="kpi-value" id="kpi-latency">24 ms</strong>
+            <span class="kpi-sub">Balanceo HTTP / REST</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Primario PostgreSQL 17</span>
+            <strong class="kpi-value accent-blue" id="kpi-pg-primary">PG-Node-1</strong>
+            <span class="kpi-sub">Gestionado por Patroni + etcd</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Primario MongoDB 7</span>
+            <strong class="kpi-value accent-blue" id="kpi-mongo-primary">Mongo-Node-1</strong>
+            <span class="kpi-sub">Replica Set (3 nodos)</span>
+          </div>
+        </div>
+
+        <div class="infra-sections" id="infra-container">
+          <!-- Renderizado dinámicamente desde app.js -->
+        </div>
+      </section>
+
+      <!-- VISTA 2: PEDIDOS Y TRANSACCIONES -->
+      <section id="tab-pedidos" class="tab-view">
+        <div class="split-layout">
+          <div class="card form-card">
+            <h3>Registrar Nuevo Pedido</h3>
+            <p class="card-desc">Envía la transacción vía <strong>Módulo A (TS)</strong> hacia <strong>Módulo B (Python)</strong> y audita en <strong>Módulo C (Go)</strong>.</p>
+            <form id="order-form">
+              <div class="form-group">
+                <label for="cliente">Cliente</label>
+                <input type="text" id="cliente" placeholder="Ej: Comercial Maule Ltda." required />
+              </div>
+              <div class="form-group">
+                <label for="direccion">Dirección de entrega</label>
+                <input type="text" id="direccion" placeholder="Ej: Av. Manso de Velasco 412, Curicó" required />
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="monto">Monto (CLP)</label>
+                  <input type="number" id="monto" placeholder="25990" min="1000" required />
+                </div>
+                <div class="form-group">
+                  <label for="repartidor">Repartidor asignado</label>
+                  <select id="repartidor">
+                    <option value="Carlos Muñoz">Carlos Muñoz</option>
+                    <option value="Valentina Soto">Valentina Soto</option>
+                    <option value="Matías Paredes">Matías Paredes</option>
+                  </select>
+                </div>
+              </div>
+              <button type="submit" class="btn btn-primary btn-full">Crear Pedido y Transacción</button>
+            </form>
+          </div>
+
+          <div class="card table-card">
+            <div class="card-header-row">
+              <h3>Pedidos Activos y Transacciones</h3>
+              <input type="text" id="order-search" class="search-input" placeholder="Buscar por ID, cliente o repartidor..." />
+            </div>
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Cliente</th>
+                    <th>Repartidor</th>
+                    <th>Monto</th>
+                    <th>Nodo Procesador</th>
+                    <th>Estado</th>
+                  </tr>
+                </thead>
+                <tbody id="orders-tbody">
+                  <!-- Renderizado desde app.js -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VISTA 3: AUDITORÍA Y EVENTOS -->
+      <section id="tab-auditoria" class="tab-view">
+        <div class="card">
+          <div class="card-header-row">
+            <div>
+              <h3>Registro de Auditoría (MongoDB Replica Set)</h3>
+              <p class="card-desc">Eventos capturados de forma asíncrona por el Módulo C (Go).</p>
+            </div>
+            <div class="filter-bar">
+              <select id="audit-filter-type" class="search-input">
+                <option value="ALL">Todos los eventos</option>
+                <option value="TX">Transacciones</option>
+                <option value="FAILOVER">Failover / Salud</option>
+              </select>
+              <input type="text" id="audit-search" class="search-input" placeholder="Filtrar logs..." />
+            </div>
+          </div>
+
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Tipo</th>
+                  <th>Instancia Origen</th>
+                  <th>Detalle del Evento</th>
+                  <th>Resultado</th>
+                </tr>
+              </thead>
+              <tbody id="audit-tbody">
+                <!-- Renderizado desde app.js -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
